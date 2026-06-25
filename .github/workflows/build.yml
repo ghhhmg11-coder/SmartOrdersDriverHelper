@@ -47,7 +47,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: ./gradlew assembleDebug --no-daemon
 
       - name: Build Release APK
         run: ./gradlew assembleRelease --no-daemon
@@ -65,15 +65,3 @@ jobs:
           name: JeenyUltimateHelper-release
           path: app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 30
-
-      - name: Create GitHub Release
-        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ github.run_number }}
-          name: "Jeeny Ultimate Helper v${{ github.run_number }}"
-          files: |
-            app/build/outputs/apk/debug/app-debug.apk
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
