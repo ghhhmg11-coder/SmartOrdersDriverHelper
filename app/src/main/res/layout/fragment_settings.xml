@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <!-- Service Status -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="حالة خدمة إمكانية الوصول"
+                android:textColor="@color/text_secondary"
+                android:textSize="14sp"/>
+            <TextView
+                android:id="@+id/tv_service_state"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="متوقفة ✗"
+                android:textColor="@color/text_dim"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
+        </LinearLayout>
+
+        <!-- Price Threshold -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/card_bg"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="10dp">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="الحد الأدنى للسعر"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="14sp"/>
+                <TextView
+                    android:id="@+id/tv_price_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="6.0"
+                    android:textColor="@color/gold_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+
+            <SeekBar
+                android:id="@+id/seekbar_price"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="200"
+                android:progress="60"
+                android:progressTint="@color/gold_primary"
+                android:thumbTint="@color/gold_primary"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="4dp">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="0"
+                    android:textColor="@color/text_dim"
+                    android:textSize="11sp"/>
+                <View android:layout_width="0dp" android:layout_height="0dp" android:layout_weight="1"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="20.0"
+                    android:textColor="@color/text_dim"
+                    android:textSize="11sp"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Buttons -->
+        <Button
+            android:id="@+id/btn_open_accessibility"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:text="فتح إعدادات إمكانية الوصول"
+            android:textColor="@color/bg_dark"
+            android:backgroundTint="@color/gold_primary"
+            android:layout_marginBottom="10dp"/>
+
+        <Button
+            android:id="@+id/btn_toggle_float"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:text="تشغيل الزر العائم"
+            android:textColor="@color/gold_primary"
+            android:backgroundTint="@color/bg_card"
+            android:layout_marginBottom="10dp"/>
+
+        <Button
+            android:id="@+id/btn_stop_float"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:text="إيقاف الزر العائم"
+            android:textColor="@color/text_dim"
+            android:backgroundTint="@color/bg_card"
+            android:layout_marginBottom="10dp"/>
+
+        <Button
+            android:id="@+id/btn_reset_stats"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:text="إعادة تعيين الإحصائيات"
+            android:textColor="@color/red_reject"
+            android:backgroundTint="@color/bg_card"/>
+
+    </LinearLayout>
+</ScrollView>
