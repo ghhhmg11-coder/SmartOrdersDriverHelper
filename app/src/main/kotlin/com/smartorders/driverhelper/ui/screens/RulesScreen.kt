@@ -10,25 +10,25 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.smartorders.driverhelper.AppState
-import com.smartorders.driverhelper.PreferencesManager
+import com.smartorders.driverhelper.data.AppState
+import com.smartorders.driverhelper.data.LogType
+import com.smartorders.driverhelper.data.PrefsManager
 import com.smartorders.driverhelper.ui.theme.*
 
 @Composable
-fun RulesScreen() {
-    val context = LocalContext.current
-
-    var minPrice by remember { mutableStateOf(PreferencesManager.getMinPrice(context).toString()) }
-    var maxPrice by remember { mutableStateOf(PreferencesManager.getMaxPrice(context).toString()) }
-    var minMinutes by remember { mutableStateOf(PreferencesManager.getMinMinutes(context).toString()) }
-    var maxMinutes by remember { mutableStateOf(PreferencesManager.getMaxMinutes(context).toString()) }
-    var maxDistance by remember { mutableStateOf(PreferencesManager.getMaxDistance(context).toString()) }
-    var saved by remember { mutableStateOf(false) }
+fun RulesScreen(prefs: PrefsManager) {
+    var minPrice by remember { mutableStateOf(prefs.minPrice.toString()) }
+    var maxPrice by remember { mutableStateOf(prefs.maxPrice.toString()) }
+    var minMinutes by remember { mutableStateOf(prefs.minMinutes.toString()) }
+    var maxMinutes by remember { mutableStateOf(prefs.maxMinutes.toString()) }
+    var maxDistance by remember { mutableStateOf(prefs.maxDistance.toString()) }
+    var savedMessage by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
@@ -38,127 +38,166 @@ fun RulesScreen() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Rules", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-
         Text(
-            "com.jeeny.driver / com.jeeny.drivers",
-            fontSize = 11.sp,
-            color = JeenyPurple
+            "Rules",
+            color = Color.White,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.End
         )
 
-        SectionHeader("Price (SAR ﷼)")
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            RuleTextField(
+        // Package info
+        Text(
+            "com.jeeny.driver / com.jeeny.drivers",
+            color = AccentPurple,
+            fontSize = 12.sp,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.Center
+        )
+
+        // Price section
+        SectionHeader("(﷼ SAR) Price")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            RuleField(
                 modifier = Modifier.weight(1f),
-                value = minPrice,
-                label = "Min Price ﷼",
-                onValueChange = { minPrice = it }
-            )
-            RuleTextField(
-                modifier = Modifier.weight(1f),
+                label = "﷼ Max Price",
                 value = maxPrice,
-                label = "Max Price ﷼",
                 onValueChange = { maxPrice = it }
             )
+            RuleField(
+                modifier = Modifier.weight(1f),
+                label = "﷼ Min Price",
+                value = minPrice,
+                onValueChange = { minPrice = it }
+            )
         }
 
+        // Time section
         SectionHeader("Pickup Time Rules (minutes)")
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            RuleTextField(
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            RuleField(
                 modifier = Modifier.weight(1f),
-                value = minMinutes,
-                label = "Min Minutes",
-                onValueChange = { minMinutes = it }
-            )
-            RuleTextField(
-                modifier = Modifier.weight(1f),
-                value = maxMinutes,
                 label = "Max Minutes",
+                value = maxMinutes,
                 onValueChange = { maxMinutes = it }
             )
+            RuleField(
+                modifier = Modifier.weight(1f),
+                label = "Min Minutes",
+                value = minMinutes,
+                onValueChange = { minMinutes = it }
+            )
         }
 
+        // Distance section
         SectionHeader("Pickup Distance (km)")
-        RuleTextField(
+        RuleField(
             modifier = Modifier.fillMaxWidth(),
-            value = maxDistance,
             label = "Max Pickup Distance (km)",
+            value = maxDistance,
             onValueChange = { maxDistance = it }
         )
 
+        // Save Button
         Button(
             onClick = {
-                val minP = minPrice.toFloatOrNull() ?: 5f
-                val maxP = maxPrice.toFloatOrNull() ?: 100f
-                val minM = minMinutes.toFloatOrNull() ?: 1f
-                val maxM = maxMinutes.toFloatOrNull() ?: 15f
-                val maxD = maxDistance.toFloatOrNull() ?: 100f
-                PreferencesManager.saveRules(context, minP, maxP, minM, maxM, maxD)
-                AppState.addEventLog("Rules saved: price=$minP-$maxP ﷼, minutes=$minM-$maxM, dist≤${maxD}km")
-                saved = true
+                val minP = minPrice.toFloatOrNull() ?: prefs.minPrice
+                val maxP = maxPrice.toFloatOrNull() ?: prefs.maxPrice
+                val minM = minMinutes.toFloatOrNull() ?: prefs.minMinutes
+                val maxM = maxMinutes.toFloatOrNull() ?: prefs.maxMinutes
+                val maxD = maxDistance.toFloatOrNull() ?: prefs.maxDistance
+
+                prefs.minPrice = minP
+                prefs.maxPrice = maxP
+                prefs.minMinutes = minM
+                prefs.maxMinutes = maxM
+                prefs.maxDistance = maxD
+
+                val msg = "💾 Rules saved: price=$minP-$maxP ﷼, minutes=$minM-$maxM, dist≤${maxD}km"
+                savedMessage = msg
+                AppState.addLog(msg, LogType.INFO)
             },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp),
             shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = JeenyPurple)
+            colors = ButtonDefaults.buttonColors(containerColor = AccentPurple)
         ) {
-            Text("Save Rules 💾", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("💾 Save Rules", fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
 
-        if (saved) {
+        if (savedMessage.isNotEmpty()) {
+            // Active rules summary
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkSurface)
+                colors = CardDefaults.cardColors(containerColor = DarkCard)
             ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Active Rules Summary", fontWeight = FontWeight.Bold, color = TextPrimary, fontSize = 16.sp)
-                    HorizontalDivider(color = DarkCard)
-                    SummaryRow("Price Range", "﷼ ${maxPrice} – ${minPrice}")
-                    SummaryRow("Pickup Minutes", "min ${maxMinutes} – ${minMinutes}")
-                    SummaryRow("Max Distance", "km $maxDistance")
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Active Rules Summary",
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    RuleSummaryRow("Price Range", "﷼ ${maxPrice} – ${minPrice}")
+                    RuleSummaryRow("Pickup Minutes", "min ${maxMinutes} – ${minMinutes}")
+                    RuleSummaryRow("Max Distance", "km ${maxDistance}")
                 }
             }
         }
-
-        Spacer(Modifier.height(80.dp))
     }
 }
 
 @Composable
 fun SectionHeader(text: String) {
-    Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = JeenyPurple)
-}
-
-@Composable
-fun RuleTextField(
-    modifier: Modifier = Modifier,
-    value: String,
-    label: String,
-    onValueChange: (String) -> Unit
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label, fontSize = 12.sp) },
-        modifier = modifier,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        singleLine = true,
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = JeenyPurple,
-            unfocusedBorderColor = TextSecondary,
-            focusedLabelColor = JeenyPurple,
-            unfocusedLabelColor = TextSecondary,
-            focusedTextColor = TextPrimary,
-            unfocusedTextColor = TextPrimary,
-            cursorColor = JeenyPurple
-        )
+    Text(
+        text,
+        color = AccentPurple,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.fillMaxWidth(),
+        textAlign = TextAlign.End
     )
 }
 
 @Composable
-fun SummaryRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+fun RuleField(modifier: Modifier = Modifier, label: String, value: String, onValueChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label, color = TextSecondary, fontSize = 12.sp) },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        singleLine = true,
+        modifier = modifier,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = AccentPurple,
+            unfocusedBorderColor = BorderColor,
+            focusedTextColor = Color.White,
+            unfocusedTextColor = Color.White,
+            cursorColor = AccentPurple
+        ),
+        shape = RoundedCornerShape(12.dp)
+    )
+}
+
+@Composable
+fun RuleSummaryRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
         Text(label, color = TextSecondary, fontSize = 13.sp)
-        Text(value, color = TextPrimary, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+        Text(value, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }

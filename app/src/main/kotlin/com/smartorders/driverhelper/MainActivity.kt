@@ -1,118 +1,153 @@
 package com.smartorders.driverhelper
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Rule
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.navigation.NavHostController
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.smartorders.driverhelper.ui.screens.*
-import com.smartorders.driverhelper.ui.theme.*
+import com.smartorders.driverhelper.data.AppState
+import com.smartorders.driverhelper.data.PrefsManager
+import com.smartorders.driverhelper.service.FloatingOverlayService
+import com.smartorders.driverhelper.ui.screens.DashboardScreen
+import com.smartorders.driverhelper.ui.screens.DebugScreen
+import com.smartorders.driverhelper.ui.screens.RulesScreen
+import com.smartorders.driverhelper.ui.screens.SettingsScreen
+import com.smartorders.driverhelper.ui.theme.SmartOrdersTheme
 
 class MainActivity : ComponentActivity() {
 
+    private lateinit var prefs: PrefsManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-
-        AppState.setAutoAcceptEnabled(PreferencesManager.isAutoAcceptEnabled(this))
-        AppState.updateFromPrefs(
-            accepted = PreferencesManager.getAcceptedTrips(this),
-            rejected = PreferencesManager.getRejectedTrips(this),
-            detected = PreferencesManager.getDetectedTrips(this),
-            totalSar = PreferencesManager.getTotalSar(this)
-        )
+        prefs = PrefsManager(this)
+        AppState.isAutoAcceptEnabled.value = prefs.autoAcceptEnabled
 
         setContent {
             SmartOrdersTheme {
-                MainApp()
+                MainNavigation(
+                    prefs = prefs,
+                    onStartOverlay = { startFloatingService() },
+                    onStopOverlay = { stopFloatingService() },
+                    onOpenAccessibility = { openAccessibilitySettings() },
+                    onOpenOverlayPermission = { openOverlayPermissionSettings() }
+                )
             }
         }
     }
+
+    private fun startFloatingService() {
+        if (!Settings.canDrawOverlays(this)) {
+            openOverlayPermissionSettings()
+            return
+        }
+        startForegroundService(Intent(this, FloatingOverlayService::class.java))
+        AppState.addLog("Floating overlay started", com.smartorders.driverhelper.data.LogType.INFO)
+    }
+
+    private fun stopFloatingService() {
+        stopService(Intent(this, FloatingOverlayService::class.java))
+        AppState.addLog("Floating overlay stopped", com.smartorders.driverhelper.data.LogType.WARNING)
+    }
+
+    private fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    private fun openOverlayPermissionSettings() {
+        startActivity(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
+    }
 }
 
-sealed class Screen(val route: String, val label: String, val icon: String) {
-    object Settings : Screen("settings", "Settings", "⚙")
-    object Debug : Screen("debug", "Debug", "🐞")
-    object Rules : Screen("rules", "Rules", "≡×")
-    object Dashboard : Screen("dashboard", "Dashboard", "⊞")
+sealed class Screen(val route: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    object Dashboard : Screen("dashboard", "Dashboard", Icons.Filled.Dashboard)
+    object Rules : Screen("rules", "Rules", Icons.Filled.Rule)
+    object Debug : Screen("debug", "Debug", Icons.Filled.BugReport)
+    object Settings : Screen("settings", "Settings", Icons.Filled.Settings)
 }
-
-val bottomNavItems = listOf(
-    Screen.Settings,
-    Screen.Debug,
-    Screen.Rules,
-    Screen.Dashboard
-)
 
 @Composable
-fun MainApp() {
+fun MainNavigation(
+    prefs: PrefsManager,
+    onStartOverlay: () -> Unit,
+    onStopOverlay: () -> Unit,
+    onOpenAccessibility: () -> Unit,
+    onOpenOverlayPermission: () -> Unit
+) {
     val navController = rememberNavController()
+    val items = listOf(Screen.Dashboard, Screen.Rules, Screen.Debug, Screen.Settings)
 
     Scaffold(
-        containerColor = DarkBackground,
-        bottomBar = { BottomNavBar(navController) }
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface
+            ) {
+                val navBackStackEntry by navController.currentBackStackEntryAsState()
+                val currentDestination = navBackStackEntry?.destination
+                items.forEach { screen ->
+                    NavigationBarItem(
+                        icon = { Icon(screen.icon, contentDescription = screen.label) },
+                        label = { Text(screen.label) },
+                        selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
+                        onClick = {
+                            navController.navigate(screen.route) {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        }
+                    )
+                }
+            }
+        }
     ) { innerPadding ->
         NavHost(
             navController = navController,
             startDestination = Screen.Dashboard.route,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Screen.Dashboard.route) { DashboardScreen() }
-            composable(Screen.Rules.route) { RulesScreen() }
-            composable(Screen.Debug.route) { DebugScreen() }
-            composable(Screen.Settings.route) { SettingsScreen() }
-        }
-    }
-}
-
-@Composable
-fun BottomNavBar(navController: NavHostController) {
-    val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = backStackEntry?.destination?.route
-
-    NavigationBar(
-        containerColor = DarkSurface,
-        tonalElevation = 0.dp
-    ) {
-        bottomNavItems.forEach { screen ->
-            val selected = currentRoute == screen.route
-            NavigationBarItem(
-                selected = selected,
-                onClick = {
-                    if (currentRoute != screen.route) {
-                        navController.navigate(screen.route) {
-                            popUpTo(navController.graph.startDestinationId) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    }
-                },
-                icon = {
-                    Text(screen.icon, fontSize = 18.sp, color = if (selected) JeenyPurple else TextSecondary)
-                },
-                label = {
-                    Text(screen.label, fontSize = 10.sp, color = if (selected) JeenyPurple else TextSecondary)
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = JeenyPurple,
-                    selectedTextColor = JeenyPurple,
-                    indicatorColor = DarkCard,
-                    unselectedIconColor = TextSecondary,
-                    unselectedTextColor = TextSecondary
+            composable(Screen.Dashboard.route) {
+                DashboardScreen(prefs = prefs)
+            }
+            composable(Screen.Rules.route) {
+                RulesScreen(prefs = prefs)
+            }
+            composable(Screen.Debug.route) {
+                DebugScreen()
+            }
+            composable(Screen.Settings.route) {
+                SettingsScreen(
+                    prefs = prefs,
+                    onStartOverlay = onStartOverlay,
+                    onStopOverlay = onStopOverlay,
+                    onOpenAccessibility = onOpenAccessibility,
+                    onOpenOverlayPermission = onOpenOverlayPermission
                 )
-            )
+            }
         }
     }
 }

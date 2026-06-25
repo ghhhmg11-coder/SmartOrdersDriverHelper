@@ -1,9 +1,7 @@
 package com.smartorders.driverhelper.ui.screens
 
-import android.content.Intent
-import android.net.Uri
-import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,46 +10,25 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.smartorders.driverhelper.AppState
-import com.smartorders.driverhelper.PreferencesManager
-import com.smartorders.driverhelper.service.FloatingOverlayService
+import com.smartorders.driverhelper.data.AppState
+import com.smartorders.driverhelper.data.LogType
+import com.smartorders.driverhelper.data.PrefsManager
+import com.smartorders.driverhelper.service.JeenyAccessibilityService
 import com.smartorders.driverhelper.ui.theme.*
 
 @Composable
-fun SettingsScreen() {
-    val context = LocalContext.current
-    var showResetConfirm by remember { mutableStateOf(false) }
-
-    if (showResetConfirm) {
-        AlertDialog(
-            onDismissRequest = { showResetConfirm = false },
-            title = { Text("Reset Settings", color = TextPrimary) },
-            text = { Text("This will reset all rules to defaults and clear stats.", color = TextSecondary) },
-            confirmButton = {
-                TextButton(onClick = {
-                    PreferencesManager.saveRules(context, 5f, 100f, 1f, 15f, 100f)
-                    PreferencesManager.resetStats(context)
-                    AppState.resetStats()
-                    AppState.addEventLog("Settings reset to defaults")
-                    showResetConfirm = false
-                }) {
-                    Text("Reset", color = RedInactive)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showResetConfirm = false }) {
-                    Text("Cancel", color = TextSecondary)
-                }
-            },
-            containerColor = DarkSurface,
-            titleContentColor = TextPrimary
-        )
-    }
-
+fun SettingsScreen(
+    prefs: PrefsManager,
+    onStartOverlay: () -> Unit,
+    onStopOverlay: () -> Unit,
+    onOpenAccessibility: () -> Unit,
+    onOpenOverlayPermission: () -> Unit
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -60,132 +37,137 @@ fun SettingsScreen() {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Settings", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+        Text(
+            "Settings",
+            color = Color.White,
+            fontSize = 24.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.End
+        )
 
-        SettingsSection("Permissions") {
-            SettingsButton(
-                icon = "♿",
+        // Permissions section
+        SettingsSection(label = "Permissions") {
+            SettingsActionCard(
                 title = "Accessibility Service",
                 subtitle = "Enable Smart Orders in accessibility settings",
-                color = JeenyPurple
-            ) {
-                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            SettingsButton(
-                icon = "🪟",
+                emoji = "♿",
+                accentColor = AccentPurple,
+                onClick = onOpenAccessibility
+            )
+            SettingsActionCard(
                 title = "Overlay Permission",
                 subtitle = "Allow drawing over other apps",
-                color = JeenyPurple
-            ) {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${context.packageName}")
-                )
-                context.startActivity(intent)
-            }
+                emoji = "▣",
+                accentColor = AccentPurple,
+                onClick = onOpenOverlayPermission
+            )
         }
 
-        SettingsSection("Floating Overlay") {
-            SettingsButton(
-                icon = "▶",
+        // Floating Overlay section
+        SettingsSection(label = "Floating Overlay") {
+            SettingsActionCard(
                 title = "Start Floating Overlay",
                 subtitle = "Shows the floating ON/OFF button",
-                color = GreenActive
-            ) {
-                FloatingOverlayService.start(context)
-                AppState.addEventLog("Floating overlay started")
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            SettingsButton(
-                icon = "⏹",
+                emoji = "▶",
+                accentColor = AccentGreen,
+                onClick = onStartOverlay
+            )
+            SettingsActionCard(
                 title = "Stop Floating Overlay",
                 subtitle = "Remove the floating button",
-                color = RedInactive
-            ) {
-                FloatingOverlayService.stop(context)
-                AppState.addEventLog("Floating overlay stopped")
-            }
+                emoji = "■",
+                accentColor = AccentRed,
+                onClick = onStopOverlay
+            )
         }
 
-        SettingsSection("App") {
-            SettingsButton(
-                icon = "🔄",
+        // App section
+        SettingsSection(label = "App") {
+            SettingsActionCard(
                 title = "Reset Settings",
                 subtitle = "Restore default rules and clear all stats",
-                color = RedInactive
+                emoji = "↺",
+                accentColor = AccentRed,
+                onClick = {
+                    prefs.resetAll()
+                    AppState.clearStats()
+                    AppState.eventLog.clear()
+                    AppState.addLog("↺ Settings reset to defaults", LogType.WARNING)
+                }
+            )
+        }
+
+        // Monitored packages
+        SettingsSection(label = "Monitored Packages") {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkCard)
             ) {
-                showResetConfirm = true
-            }
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurface)
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Monitored Packages", fontWeight = FontWeight.SemiBold, color = JeenyPurple, fontSize = 14.sp)
-                Text("• com.jeeny.driver", color = TextSecondary, fontSize = 12.sp)
-                Text("• com.jeeny.drivers", color = TextSecondary, fontSize = 12.sp)
-                Spacer(Modifier.height(8.dp))
-                Text("Detection Markers", fontWeight = FontWeight.SemiBold, color = JeenyPurple, fontSize = 14.sp)
-                Text("• قبول العرض", color = TextSecondary, fontSize = 12.sp)
-                Text("• يبعد  •  ﷼  •  مشوار داخل المدينة  •  استريح", color = TextSecondary, fontSize = 12.sp)
-            }
-        }
-
-        Spacer(Modifier.height(80.dp))
-    }
-}
-
-@Composable
-fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-        Text(title, fontSize = 13.sp, color = TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurface)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                content()
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    JeenyAccessibilityService.JEENY_PACKAGES.forEach { pkg ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(AccentPurple, shape = RoundedCornerShape(4.dp))
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(pkg, color = AccentPurple, fontSize = 13.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Detection markers: قبول العرض • يبعد • مشوار داخل المدينة • استريح • ﷼",
+                        color = TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-fun SettingsButton(
-    icon: String,
+fun SettingsSection(label: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(label, color = TextSecondary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        content()
+    }
+}
+
+@Composable
+fun SettingsActionCard(
     title: String,
     subtitle: String,
-    color: androidx.compose.ui.graphics.Color,
+    emoji: String,
+    accentColor: Color,
     onClick: () -> Unit
 ) {
-    OutlinedButton(
+    Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, accentColor.copy(alpha = 0.4f), RoundedCornerShape(12.dp)),
         shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = color),
-        border = androidx.compose.foundation.BorderStroke(1.dp, color.copy(alpha = 0.4f)),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+        colors = CardDefaults.cardColors(containerColor = DarkCard)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Start
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(icon, fontSize = 20.sp)
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = color)
-                Text(subtitle, fontSize = 11.sp, color = TextSecondary)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = accentColor, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Text(subtitle, color = TextSecondary, fontSize = 12.sp)
             }
+            Text(emoji, fontSize = 22.sp)
         }
     }
 }

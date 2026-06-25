@@ -1,3 +1,1 @@
--keep class com.smartorders.driverhelper.service.** { *; }
--keepattributes *Annotation*
--dontwarn kotlin.**
+-keep class com.smartorders.driverhelper.** { *; }

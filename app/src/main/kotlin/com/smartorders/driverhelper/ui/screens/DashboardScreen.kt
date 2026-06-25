@@ -1,11 +1,11 @@
 package com.smartorders.driverhelper.ui.screens
 
-import android.content.Intent
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -14,29 +14,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.smartorders.driverhelper.AppState
-import com.smartorders.driverhelper.PreferencesManager
-import com.smartorders.driverhelper.service.JeenyAccessibilityService
+import com.smartorders.driverhelper.data.AppState
+import com.smartorders.driverhelper.data.LogType
+import com.smartorders.driverhelper.data.PrefsManager
 import com.smartorders.driverhelper.ui.theme.*
 
 @Composable
-fun DashboardScreen() {
-    val context = LocalContext.current
-    val autoAccept by AppState.autoAcceptEnabled.collectAsState()
-    val serviceConnected by AppState.serviceConnected.collectAsState()
-    val accepted by AppState.acceptedTrips.collectAsState()
-    val rejected by AppState.rejectedTrips.collectAsState()
-    val detected by AppState.detectedTrips.collectAsState()
-    val totalSar by AppState.totalSar.collectAsState()
+fun DashboardScreen(prefs: PrefsManager) {
+    val isAutoAccept by AppState.isAutoAcceptEnabled
+    val isConnected by AppState.isServiceConnected
+    val detected by AppState.detectedTrips
+    val accepted by AppState.acceptedTrips
+    val rejected by AppState.rejectedTrips
+    val totalSAR by AppState.totalSAR
 
-    val autoAcceptColor by animateColorAsState(
-        targetValue = if (autoAccept) GreenActive else DarkCard,
-        animationSpec = tween(300),
-        label = "autoAcceptColor"
+    val toggleColor by animateColorAsState(
+        targetValue = if (isAutoAccept) AccentGreen else DarkCard,
+        label = "toggle"
     )
 
     Column(
@@ -45,138 +43,173 @@ fun DashboardScreen() {
             .background(DarkBackground)
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text(
-            text = "Smart Orders",
-            fontSize = 26.sp,
-            fontWeight = FontWeight.Bold,
-            color = TextPrimary
-        )
-        Text(
-            text = "Driver Helper",
-            fontSize = 14.sp,
-            color = TextSecondary,
-            modifier = Modifier.offset(y = (-8).dp)
-        )
+        // Header
+        Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
+            Text(
+                "Smart Orders",
+                color = Color.White,
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                "Driver Helper",
+                color = TextSecondary,
+                fontSize = 14.sp
+            )
+        }
 
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = autoAcceptColor)
+        // Auto Accept Toggle Card
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(toggleColor)
+                .border(
+                    1.dp,
+                    if (isAutoAccept) AccentGreen else BorderColor,
+                    RoundedCornerShape(16.dp)
+                )
+                .padding(16.dp)
         ) {
             Row(
-                modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("Auto Accept", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
                     Text(
-                        text = if (autoAccept) "ACTIVE – Monitoring Jeeny ●" else "INACTIVE",
-                        fontSize = 12.sp,
-                        color = if (autoAccept) GreenActive else TextSecondary
+                        "Auto Accept",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                }
-                Switch(
-                    checked = autoAccept,
-                    onCheckedChange = { enabled ->
-                        PreferencesManager.setAutoAcceptEnabled(context, enabled)
-                        AppState.setAutoAcceptEnabled(enabled)
-                        AppState.addEventLog(if (enabled) "Auto-accept ENABLED ▶" else "Auto-accept DISABLED ⏸")
-                        val intent = Intent(JeenyAccessibilityService.ACTION_TOGGLE_AUTO_ACCEPT).apply {
-                            putExtra(JeenyAccessibilityService.EXTRA_ENABLED, enabled)
-                        }
-                        context.sendBroadcast(intent)
-                    },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = JeenyPurple,
-                        uncheckedThumbColor = TextSecondary,
-                        uncheckedTrackColor = DarkCard
-                    )
-                )
-            }
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurface)
-        ) {
-            Row(
-                modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("⬡", fontSize = 24.sp, color = JeenyPurple)
-                    Column {
-                        Text("Accessibility Service", fontWeight = FontWeight.SemiBold, color = TextPrimary)
+                    if (isAutoAccept) {
                         Text(
-                            text = if (serviceConnected) "✓ Connected" else "✗ Disconnected",
-                            fontSize = 12.sp,
-                            color = if (serviceConnected) GreenActive else RedInactive
+                            "ACTIVE – Monitoring Jeeny •",
+                            color = AccentGreen,
+                            fontSize = 12.sp
                         )
                     }
                 }
-                Text(
-                    text = "🏃",
-                    fontSize = 24.sp,
-                    color = if (serviceConnected) GreenActive else TextSecondary
+                Switch(
+                    checked = isAutoAccept,
+                    onCheckedChange = { enabled ->
+                        AppState.isAutoAcceptEnabled.value = enabled
+                        prefs.autoAcceptEnabled = enabled
+                        AppState.addLog(
+                            if (enabled) "▶ Auto-accept ENABLED" else "⏹ Auto-accept DISABLED",
+                            if (enabled) LogType.SUCCESS else LogType.WARNING
+                        )
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = AccentGreen.copy(alpha = 0.8f)
+                    )
                 )
             }
         }
 
-        Text("Today's Stats", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = TextSecondary)
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard(modifier = Modifier.weight(1f), icon = "✅", value = accepted.toString(), label = "Accepted", color = GreenActive)
-            StatCard(modifier = Modifier.weight(1f), icon = "⊙", value = detected.toString(), label = "Detected", color = AccentYellow)
-        }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard(modifier = Modifier.weight(1f), icon = "﷼", value = "%.2f".format(totalSar), label = "Total SAR", color = JeenyPurple)
-            StatCard(modifier = Modifier.weight(1f), icon = "⊗", value = rejected.toString(), label = "Rejected", color = RedInactive)
-        }
-
-        OutlinedButton(
-            onClick = {
-                PreferencesManager.resetStats(context)
-                AppState.resetStats()
-            },
+        // Accessibility Service Status
+        Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = RedInactive),
-            border = androidx.compose.foundation.BorderStroke(1.dp, RedInactive)
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkCard)
         ) {
-            Text("Clear Today Stats 🗑", color = RedInactive)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Accessibility Service",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isConnected) {
+                        Text("✓ Connected", color = AccentGreen, fontSize = 14.sp)
+                    } else {
+                        Text("✗ Disconnected", color = AccentRed, fontSize = 14.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (isConnected) AccentGreen else AccentRed)
+                    )
+                }
+            }
         }
 
-        Spacer(Modifier.height(16.dp))
+        // Stats section label
+        Text(
+            "Today's Stats",
+            color = TextSecondary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.fillMaxWidth(),
+            textAlign = TextAlign.End
+        )
+
+        // Stats grid
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            StatCard(modifier = Modifier.weight(1f), label = "Detected", value = "$detected", icon = "◎", iconColor = AccentOrange)
+            StatCard(modifier = Modifier.weight(1f), label = "Accepted", value = "$accepted", icon = "✓", iconColor = AccentGreen)
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            StatCard(modifier = Modifier.weight(1f), label = "Rejected", value = "$rejected", icon = "✗", iconColor = AccentRed)
+            StatCard(modifier = Modifier.weight(1f), label = "Total SAR", value = "${"%.2f".format(totalSAR)} ﷼", icon = "﷼", iconColor = AccentPurple)
+        }
+
+        // Clear Stats
+        OutlinedButton(
+            onClick = { AppState.clearStats() },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AccentRed),
+            border = ButtonDefaults.outlinedButtonBorder.copy(
+                brush = androidx.compose.ui.graphics.SolidColor(AccentRed)
+            )
+        ) {
+            Text("🗑 Clear Today Stats", color = AccentRed)
+        }
     }
 }
 
 @Composable
 fun StatCard(
     modifier: Modifier = Modifier,
-    icon: String,
-    value: String,
     label: String,
-    color: Color
+    value: String,
+    icon: String,
+    iconColor: Color
 ) {
     Card(
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkSurface)
+        colors = CardDefaults.cardColors(containerColor = DarkCard)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Text(icon, fontSize = 24.sp, color = color)
-            Text(value, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-            Text(label, fontSize = 12.sp, color = TextSecondary)
+            Text(icon, color = iconColor, fontSize = 24.sp)
+            Text(value, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(label, color = TextSecondary, fontSize = 12.sp)
         }
     }
 }
