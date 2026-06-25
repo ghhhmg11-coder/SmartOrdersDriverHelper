@@ -7,9 +7,9 @@ object TripParser {
 
     private const val TAG = "TripParser"
 
-    // Accept button variants — all apps, Arabic + English
+    // ── Accept button texts ───────────────────────────────────────────────────
     private val ACCEPT_BUTTON_TEXTS = setOf(
-        "قبول العرض",
+        "قبول العرض",   // Jeeny — exact text from screenshot
         "قبول الطلب",
         "قبول",
         "اقبل",
@@ -21,166 +21,149 @@ object TripParser {
         "موافق"
     )
 
-    // Jeeny/Careem trip request screen markers
-    private val JEENY_REQUEST_MARKERS = listOf("قبول العرض", "يبعد", "دقائق", "دقيقة")
-    private val UBER_REQUEST_MARKERS  = listOf("Accept", "Accept Trip", "New Trip", "Pickup")
-    private val CAREEM_REQUEST_MARKERS = listOf("Accept", "New Booking", "قبول")
-    private val BOLT_REQUEST_MARKERS  = listOf("Accept", "New order", "قبول")
+    // ── Jeeny-specific markers visible in screenshot ──────────────────────────
+    // "مشوار داخل المدينة" = trip type label (pill at top)
+    // "يبعد" = "away" (pickup ETA prefix)
+    // "دقائق/دقيقة" = minutes
+    // "ستريح" = "you'll earn" (profit label in purple box)
+    // "قبول العرض" = accept button
+    private val JEENY_MARKERS  = listOf("قبول العرض", "ستريح", "مشوار", "يبعد")
+    private val UBER_MARKERS   = listOf("Accept", "Accept Trip", "New Trip", "Pickup")
+    private val CAREEM_MARKERS = listOf("Accept", "New Booking", "قبول")
+    private val BOLT_MARKERS   = listOf("Accept", "New order", "قبول")
 
-    // Price with explicit currency
-    private val priceWithCurrencyRegex = Regex(
-        """(\d{1,4}(?:\.\d{1,2})?)\s*(?:SAR|ريال|﷼|SR|ر\.س)""",
-        RegexOption.IGNORE_CASE
+    // ── Price regexes ─────────────────────────────────────────────────────────
+    // Handles both "6.67 ﷼" and "﷼ 6.67" (Jeeny shows ﷼ BEFORE the number)
+    private val priceAfterCurrencyRegex = Regex(
+        """(?:﷼|ريال|SAR|SR|ر\.س)\s*(\d{1,4}(?:[.,]\d{1,2})?)"""
     )
-
-    // Bare price: a decimal number NOT followed by دقيقة/دقائق/min/km/كم
-    // Must be between 1.00 and 9999.99 — looks like a fare
+    private val priceBeforeCurrencyRegex = Regex(
+        """(\d{1,4}(?:[.,]\d{1,2})?)\s*(?:﷼|ريال|SAR|SR|ر\.س)"""
+    )
+    // Bare decimal — e.g. standalone "6.67" not near دقيقة/km
     private val barePriceRegex = Regex(
-        """(?<![.\d])(\d{1,4}\.\d{1,2})(?!\s*(?:دقيقة|دقائق|min|km|كم|%))"""
+        """(?<![.\d])(\d{1,4}\.\d{1,2})(?!\s*(?:دقيقة|دقائق|min|km|كم|%|:))"""
     )
+    // Numbers marked as minutes — exclude from price detection
+    private val minutesRegex = Regex("""(\d+)\s*(?:دقيقة|دقائق|min)""", RegexOption.IGNORE_CASE)
 
-    // Distance variants
-    private val pickupDistanceRegex = Regex(
-        """(?:pickup|استلام|التقاط|وقت الاستلام|الوصول إليك)[^\d]*(\d+(?:\.\d+)?)\s*(?:km|كم|k)""",
+    // ── Distance regexes ──────────────────────────────────────────────────────
+    private val pickupDistRegex = Regex(
+        """(?:pickup|استلام|التقاط|الوصول إليك)[^\d]*(\d+(?:\.\d+)?)\s*(?:km|كم|k)""",
         RegexOption.IGNORE_CASE
     )
-    private val tripDistanceRegex = Regex(
+    private val tripDistRegex = Regex(
         """(?:trip|رحلة|المسافة|distance)[^\d]*(\d+(?:\.\d+)?)\s*(?:km|كم|k)""",
         RegexOption.IGNORE_CASE
     )
-    private val generalDistanceRegex = Regex("""(\d+(?:\.\d+)?)\s*(?:km|كم)""", RegexOption.IGNORE_CASE)
+    private val generalDistRegex = Regex("""(\d+(?:\.\d+)?)\s*(?:km|كم)""", RegexOption.IGNORE_CASE)
 
-    // Minutes — so we don't mistake "1" in "يبعد 1 دقائق" for a price
-    private val minutesRegex = Regex("""(\d+)\s*(?:دقيقة|دقائق|min)""", RegexOption.IGNORE_CASE)
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun isRequestScreen(sourceApp: String, rawText: String): Boolean {
+        if (rawText.isBlank()) return false
         val markers = when (sourceApp) {
-            "jeeny"  -> JEENY_REQUEST_MARKERS
-            "uber"   -> UBER_REQUEST_MARKERS
-            "careem" -> CAREEM_REQUEST_MARKERS
-            "bolt"   -> BOLT_REQUEST_MARKERS
-            else     -> JEENY_REQUEST_MARKERS + UBER_REQUEST_MARKERS
+            "jeeny"  -> JEENY_MARKERS
+            "uber"   -> UBER_MARKERS
+            "careem" -> CAREEM_MARKERS
+            "bolt"   -> BOLT_MARKERS
+            else     -> JEENY_MARKERS + UBER_MARKERS
         }
-        val found = markers.any { rawText.contains(it) }
-        Log.d(TAG, "isRequestScreen[$sourceApp] = $found (checked ${markers.size} markers)")
-        return found
+        val matchedMarker = markers.firstOrNull { rawText.contains(it) }
+        return if (matchedMarker != null) {
+            Log.i(TAG, "[$sourceApp] Request screen detected via marker: '$matchedMarker'")
+            true
+        } else {
+            Log.v(TAG, "[$sourceApp] No request marker found. Checked: $markers")
+            false
+        }
     }
 
     fun parse(sourceApp: String, rawText: String): DetectedTrip? {
-        if (rawText.isBlank()) {
-            Log.d(TAG, "[$sourceApp] Empty screen text — skipping")
-            return null
-        }
-
-        // Must look like a trip request screen
-        if (!isRequestScreen(sourceApp, rawText)) {
-            Log.d(TAG, "[$sourceApp] Screen does not match trip request markers — skipping")
-            return null
-        }
+        if (rawText.isBlank()) return null
+        if (!isRequestScreen(sourceApp, rawText)) return null
 
         val price = extractPrice(sourceApp, rawText)
-        if (price <= 0.0) {
-            Log.w(TAG, "[$sourceApp] Trip screen detected but no price found. Text preview: ${rawText.take(200)}")
-            // Return a trip with price=0 so it still gets logged + counted as detected
-            // Rules will reject it because price < minPrice (unless minPrice is 0)
-            // We still want to count it as "detected" and attempt button click
-        }
+        // If price is 0 we still return a trip so it gets counted as "detected"
+        // Rules will decide whether to accept or log it
 
-        val distances = extractDistances(rawText)
-        val locations = extractLocations(rawText)
+        val (pickupDist, tripDist) = extractDistances(rawText)
+        val (pickupLoc, destLoc)   = extractLocations(rawText)
 
-        val trip = DetectedTrip(
-            sourceApp = sourceApp,
-            rawText = rawText,
-            price = price,
-            pickupDistance = distances.first,
-            tripDistance = distances.second,
-            pickupLocation = locations.first,
-            destinationLocation = locations.second
+        Log.i(TAG, "[$sourceApp] Trip parsed — price=$price SAR, pickup=${pickupDist}km, trip=${tripDist}km")
+        return DetectedTrip(
+            sourceApp           = sourceApp,
+            rawText             = rawText,
+            price               = price,
+            pickupDistance      = pickupDist,
+            tripDistance        = tripDist,
+            pickupLocation      = pickupLoc,
+            destinationLocation = destLoc
         )
-        Log.i(TAG, "[$sourceApp] Parsed trip: price=${trip.price} SAR, pickup=${trip.pickupDistance}km, trip=${trip.tripDistance}km")
-        return trip
     }
 
     private fun extractPrice(sourceApp: String, text: String): Double {
-        // 1. Try explicit currency first (most reliable)
-        val withCurrency = priceWithCurrencyRegex.find(text)
-        if (withCurrency != null) {
-            val p = withCurrency.groupValues[1].toDoubleOrNull() ?: 0.0
-            Log.d(TAG, "[$sourceApp] Price via currency pattern: $p")
-            return p
-        }
+        // 1. ﷼/SAR BEFORE the number  (e.g., "﷼ 6.67" — Jeeny layout)
+        priceAfterCurrencyRegex.find(text)?.groupValues?.get(1)
+            ?.replace(',', '.')?.toDoubleOrNull()
+            ?.also { Log.d(TAG, "[$sourceApp] Price via currency-before: $it"); return it }
 
-        // 2. Collect all numbers mentioned as minutes — exclude them from price candidates
-        val minuteNumbers = minutesRegex.findAll(text).map { it.groupValues[1] }.toSet()
-        Log.d(TAG, "[$sourceApp] Minute numbers to exclude: $minuteNumbers")
+        // 2. Number BEFORE currency symbol (e.g., "6.67 SAR")
+        priceBeforeCurrencyRegex.find(text)?.groupValues?.get(1)
+            ?.replace(',', '.')?.toDoubleOrNull()
+            ?.also { Log.d(TAG, "[$sourceApp] Price via currency-after: $it"); return it }
 
-        // 3. Try bare decimal (e.g., "6.21")
-        val candidates = barePriceRegex.findAll(text)
+        // 3. Bare decimal not near minute/km tokens
+        val minuteNums = minutesRegex.findAll(text).map { it.groupValues[1] }.toSet()
+        barePriceRegex.findAll(text)
             .map { it.groupValues[1] }
-            .filter { it !in minuteNumbers }
+            .filter { it !in minuteNums }
             .mapNotNull { it.toDoubleOrNull() }
             .filter { it in 1.0..9999.0 }
-            .toList()
+            .firstOrNull()
+            ?.also { Log.d(TAG, "[$sourceApp] Price via bare decimal: $it"); return it }
 
-        Log.d(TAG, "[$sourceApp] Bare price candidates: $candidates")
-
-        if (candidates.isNotEmpty()) {
-            val p = candidates.first()
-            Log.d(TAG, "[$sourceApp] Price via bare decimal: $p")
-            return p
-        }
-
-        // 4. Last resort: any standalone integer in reasonable fare range,
-        //    excluding minute numbers
-        val intCandidates = Regex("""(?<!\d)(\d{1,4})(?!\d)""").findAll(text)
+        // 4. Integer fallback (5–999 SAR range, not a minute number)
+        Regex("""(?<!\d)(\d{1,4})(?!\d)""").findAll(text)
             .map { it.groupValues[1] }
-            .filter { it !in minuteNumbers }
-            .mapNotNull { it.toDoubleOrNull() }
-            .filter { it in 5.0..999.0 }
-            .toList()
+            .filter { it !in minuteNums }
+            .mapNotNull { it.toIntOrNull() }
+            .filter { it in 5..999 }
+            .firstOrNull()
+            ?.toDouble()
+            ?.also { Log.d(TAG, "[$sourceApp] Price via integer fallback: $it"); return it }
 
-        Log.d(TAG, "[$sourceApp] Integer price candidates: $intCandidates")
-
-        return intCandidates.firstOrNull() ?: 0.0
+        Log.w(TAG, "[$sourceApp] Could not extract price. Text: ${text.take(200)}")
+        return 0.0
     }
 
     private fun extractDistances(text: String): Pair<Double, Double> {
-        val pickupMatch = pickupDistanceRegex.find(text)
-        val tripMatch = tripDistanceRegex.find(text)
-        val allDistances = generalDistanceRegex.findAll(text)
-            .map { it.groupValues[1].toDoubleOrNull() ?: 0.0 }
-            .filter { it > 0 }
-            .toList()
-
-        val pickupDist = pickupMatch?.groupValues?.get(1)?.toDoubleOrNull()
-            ?: allDistances.firstOrNull() ?: 0.0
-        val tripDist = tripMatch?.groupValues?.get(1)?.toDoubleOrNull()
-            ?: allDistances.getOrNull(1) ?: 0.0
-
-        return Pair(pickupDist, tripDist)
-    }
-
-    private fun extractLocations(text: String): Pair<String, String> {
-        val locationRegex = Regex("""(?:from|من|إلى|to|pickup|dropoff)[:\s]+([^\n,]{3,60})""", RegexOption.IGNORE_CASE)
-        val matches = locationRegex.findAll(text).map { it.groupValues[1].trim() }.toList()
+        val pkp = pickupDistRegex.find(text)?.groupValues?.get(1)?.toDoubleOrNull()
+        val trp = tripDistRegex.find(text)?.groupValues?.get(1)?.toDoubleOrNull()
+        val all = generalDistRegex.findAll(text)
+            .mapNotNull { it.groupValues[1].toDoubleOrNull() }
+            .filter { it > 0 }.toList()
         return Pair(
-            matches.getOrNull(0) ?: "",
-            matches.getOrNull(1) ?: ""
+            pkp ?: all.firstOrNull() ?: 0.0,
+            trp ?: all.getOrNull(1) ?: 0.0
         )
     }
 
-    fun isAcceptButtonText(text: String): Boolean {
-        val normalised = text.trim()
-        if (normalised.isEmpty()) return false
-        val match = ACCEPT_BUTTON_TEXTS.any { it.equals(normalised, ignoreCase = true) }
-        if (match) Log.d(TAG, "isAcceptButtonText matched: '$normalised'")
-        return match
+    private fun extractLocations(text: String): Pair<String, String> {
+        val locRegex = Regex("""(?:from|من|إلى|to|pickup|dropoff)[:\s]+([^\n,]{3,60})""", RegexOption.IGNORE_CASE)
+        val matches  = locRegex.findAll(text).map { it.groupValues[1].trim() }.toList()
+        return Pair(matches.getOrNull(0) ?: "", matches.getOrNull(1) ?: "")
     }
 
+    /** Exact match against full button text */
+    fun isAcceptButtonText(text: String): Boolean {
+        val t = text.trim()
+        return t.isNotEmpty() && ACCEPT_BUTTON_TEXTS.any { it.equals(t, ignoreCase = true) }
+    }
+
+    /** Substring match — handles buttons that wrap or add icons around text */
     fun containsAcceptButtonText(text: String): Boolean {
-        val normalised = text.trim()
-        if (normalised.isEmpty()) return false
-        return ACCEPT_BUTTON_TEXTS.any { normalised.contains(it, ignoreCase = true) }
+        val t = text.trim()
+        return t.isNotEmpty() && ACCEPT_BUTTON_TEXTS.any { t.contains(it, ignoreCase = true) }
     }
 }
