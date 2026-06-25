@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg_dark">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:gravity="center_vertical"
+        android:background="@color/bg_card">
+
+        <TextView
+            android:id="@+id/tv_zone_count"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="المناطق المحظورة: 0"
+            android:textColor="@color/gold_primary"
+            android:textSize="14sp"/>
+
+        <Button
+            android:id="@+id/btn_clear_zones"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="مسح الكل"
+            android:textColor="@color/bg_dark"
+            android:backgroundTint="@color/red_reject"
+            android:textSize="12sp"/>
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:text="اضغط مطولاً على الخريطة لإضافة منطقة محظورة • اضغط على العلامة الحمراء لحذفها"
+        android:textColor="@color/text_dim"
+        android:textSize="12sp"
+        android:gravity="center"
+        android:background="@color/bg_card"/>
+
+    <fragment
+        android:id="@+id/map"
+        android:name="com.google.android.gms.maps.SupportMapFragment"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"/>
+
+</LinearLayout>
