@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Smart Orders</string>
-    <string name="accessibility_service_description">Smart Orders auto-accepts Jeeny Driver trip requests based on your rules.</string>
+    <string name="app_name">Jeeny Ultimate Helper</string>
+    <string name="service_label">Jeeny Auto Accept</string>
+    <string name="service_description">خدمة القبول التلقائي لطلبات Jeeny مع فلترة المناطق والأسعار</string>
+    <string name="tab_dashboard">لوحة التحكم</string>
+    <string name="tab_map">الخريطة</string>
+    <string name="tab_settings">الإعدادات</string>
 </resources>
