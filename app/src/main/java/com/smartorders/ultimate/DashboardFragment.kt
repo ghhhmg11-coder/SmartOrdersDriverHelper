@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import com.smartorders.ultimate.databinding.FragmentDashboardBinding
 
@@ -14,14 +15,19 @@ class DashboardFragment : Fragment() {
     private var _binding: FragmentDashboardBinding? = null
     private val binding get() = _binding!!
     private val handler = Handler(Looper.getMainLooper())
+
     private val refreshRunnable = object : Runnable {
         override fun run() {
-            updateStats()
+            updateUI()
             handler.postDelayed(this, 1000)
         }
     }
 
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
         _binding = FragmentDashboardBinding.inflate(inflater, container, false)
         return binding.root
     }
@@ -33,8 +39,8 @@ class DashboardFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        JeenyUltimateService.onStatsUpdated = { handler.post { updateUI() } }
         handler.post(refreshRunnable)
-        JeenyUltimateService.onStatsUpdated = { updateStats() }
     }
 
     override fun onPause() {
@@ -47,32 +53,58 @@ class DashboardFragment : Fragment() {
         JeenyUltimateService.countDetected = prefs.getInt("count_detected", 0)
         JeenyUltimateService.countAccepted = prefs.getInt("count_accepted", 0)
         JeenyUltimateService.countRejected = prefs.getInt("count_rejected", 0)
-        updateStats()
+        updateUI()
     }
 
-    private fun updateStats() {
-        _binding?.let {
-            it.tvDetected.text = JeenyUltimateService.countDetected.toString()
-            it.tvAccepted.text = JeenyUltimateService.countAccepted.toString()
-            it.tvRejected.text = JeenyUltimateService.countRejected.toString()
+    private fun updateUI() {
+        val b = _binding ?: return
 
-            val total = JeenyUltimateService.countDetected
-            val acceptRate = if (total > 0) {
-                (JeenyUltimateService.countAccepted * 100) / total
-            } else 0
+        // ── Stats ─────────────────────────────────────────────────────────────
+        b.tvDetected.text  = JeenyUltimateService.countDetected.toString()
+        b.tvAccepted.text  = JeenyUltimateService.countAccepted.toString()
+        b.tvRejected.text  = JeenyUltimateService.countRejected.toString()
 
-            it.progressAccept.progress = acceptRate
-            it.tvAcceptRate.text = "$acceptRate%"
+        val total      = JeenyUltimateService.countDetected
+        val acceptRate = if (total > 0) (JeenyUltimateService.countAccepted * 100) / total else 0
+        b.progressAccept.progress = acceptRate
+        b.tvAcceptRate.text       = "$acceptRate%"
 
-            it.tvServiceStatus.text = if (JeenyUltimateService.isAutoAcceptEnabled)
-                "● الخدمة نشطة" else "○ الخدمة متوقفة"
-            it.tvServiceStatus.setTextColor(
-                resources.getColor(
-                    if (JeenyUltimateService.isAutoAcceptEnabled) R.color.gold_primary else R.color.text_dim,
-                    null
-                )
+        val enabled = JeenyUltimateService.isAutoAcceptEnabled
+        b.tvServiceStatus.text = if (enabled) "● الخدمة نشطة" else "○ الخدمة متوقفة"
+        b.tvServiceStatus.setTextColor(
+            ContextCompat.getColor(
+                requireContext(),
+                if (enabled) R.color.gold_primary else R.color.text_dim
             )
-        }
+        )
+
+        // ── Debug fields ──────────────────────────────────────────────────────
+        b.tvDebugPackage.text = JeenyUltimateService.debugLastPackage
+
+        val found = JeenyUltimateService.debugAcceptFound
+        b.tvDebugAcceptFound.text = if (found) "✅ YES" else "❌ NO"
+        b.tvDebugAcceptFound.setTextColor(
+            ContextCompat.getColor(
+                requireContext(),
+                if (found) R.color.green_accept else R.color.red_reject
+            )
+        )
+
+        val clickRes = JeenyUltimateService.debugClickResult
+        b.tvDebugClickResult.text = clickRes
+        b.tvDebugClickResult.setTextColor(
+            ContextCompat.getColor(
+                requireContext(),
+                when {
+                    clickRes.contains("SUCCESS") || clickRes.contains("SENT") || clickRes.contains("TAP") ->
+                        R.color.green_accept
+                    clickRes.contains("FAIL") -> R.color.red_reject
+                    else -> R.color.text_dim
+                }
+            )
+        )
+
+        b.tvDebugTexts.text = JeenyUltimateService.debugVisibleTexts
     }
 
     override fun onDestroyView() {
