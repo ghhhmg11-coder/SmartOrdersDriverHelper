@@ -3,8 +3,6 @@ package com.smartorders.driverhelper.service
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
-import android.os.Handler
-import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
@@ -12,7 +10,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.smartorders.driverhelper.data.local.AppDatabase
 import com.smartorders.driverhelper.data.local.entity.TripLogEntity
-import com.smartorders.driverhelper.data.local.entity.ZoneEntity
 import com.smartorders.driverhelper.data.preferences.AppPreferences
 import com.smartorders.driverhelper.model.DetectedTrip
 import com.smartorders.driverhelper.model.Zone
@@ -20,6 +17,13 @@ import com.smartorders.driverhelper.utils.TripParser
 import com.smartorders.driverhelper.utils.ZoneChecker
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
+
+private data class EvaluatedRules(
+    val minPrice: Double,
+    val maxPrice: Double,
+    val maxPickupDist: Double,
+    val maxTripDist: Double
+)
 
 class SmartOrdersAccessibilityService : AccessibilityService() {
 
@@ -86,7 +90,12 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
             val trip = TripParser.parse(appName, rawText) ?: return@launch
             Log.d(TAG, "Detected trip from $appName: price=${trip.price}, pickup=${trip.pickupDistance}km")
 
-            val rules = loadRules(prefs)
+            val rules = EvaluatedRules(
+                minPrice = prefs.minPrice.first(),
+                maxPrice = prefs.maxPrice.first(),
+                maxPickupDist = prefs.maxPickupDistance.first(),
+                maxTripDist = prefs.maxTripDistance.first()
+            )
             val zones = loadZones()
 
             val (shouldAccept, reason) = evaluateRules(trip, rules, zones)
@@ -127,13 +136,6 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
         }
     }
 
-    private suspend fun loadRules(prefs: AppPreferences) = object {
-        val minPrice = prefs.minPrice.first()
-        val maxPrice = prefs.maxPrice.first()
-        val maxPickupDist = prefs.maxPickupDistance.first()
-        val maxTripDist = prefs.maxTripDistance.first()
-    }
-
     private suspend fun loadZones(): List<Zone> {
         val db = AppDatabase.getInstance(applicationContext)
         return db.zoneDao().getAllZones().first().map {
@@ -141,20 +143,14 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun evaluateRules(trip: DetectedTrip, rules: Any, zones: List<Zone>): Pair<Boolean, String> {
-        val r = rules as? Any ?: return Pair(false, "Rules error")
-        val minP = (r::class.java.getField("minPrice").get(r) as Double)
-        val maxP = (r::class.java.getField("maxPrice").get(r) as Double)
-        val maxPkp = (r::class.java.getField("maxPickupDist").get(r) as Double)
-        val maxTrip = (r::class.java.getField("maxTripDist").get(r) as Double)
-
-        if (trip.price < minP) return Pair(false, "السعر أقل من الحد الأدنى: ${trip.price} < $minP SAR")
-        if (trip.price > maxP) return Pair(false, "السعر أعلى من الحد الأقصى: ${trip.price} > $maxP SAR")
-        if (trip.pickupDistance > maxPkp && trip.pickupDistance > 0) {
-            return Pair(false, "مسافة الاستلام تجاوزت الحد: ${trip.pickupDistance} > $maxPkp km")
+    private fun evaluateRules(trip: DetectedTrip, rules: EvaluatedRules, zones: List<Zone>): Pair<Boolean, String> {
+        if (trip.price < rules.minPrice) return Pair(false, "السعر أقل من الحد الأدنى: ${trip.price} < ${rules.minPrice} SAR")
+        if (trip.price > rules.maxPrice) return Pair(false, "السعر أعلى من الحد الأقصى: ${trip.price} > ${rules.maxPrice} SAR")
+        if (trip.pickupDistance > rules.maxPickupDist && trip.pickupDistance > 0) {
+            return Pair(false, "مسافة الاستلام تجاوزت الحد: ${trip.pickupDistance} > ${rules.maxPickupDist} km")
         }
-        if (trip.tripDistance > maxTrip && trip.tripDistance > 0) {
-            return Pair(false, "مسافة الرحلة تجاوزت الحد: ${trip.tripDistance} > $maxTrip km")
+        if (trip.tripDistance > rules.maxTripDist && trip.tripDistance > 0) {
+            return Pair(false, "مسافة الرحلة تجاوزت الحد: ${trip.tripDistance} > ${rules.maxTripDist} km")
         }
         if (zones.isNotEmpty()) {
             val zoneResult = ZoneChecker.checkZones(0.0, 0.0, 0.0, 0.0, zones)
