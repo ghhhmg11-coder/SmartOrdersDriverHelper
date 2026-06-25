@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        TODO: قبل البناء، يجب إضافة مفتاح Google Maps API الخاص بك.
+        يمكنك الحصول عليه من: https://console.cloud.google.com/
+        أو ضعه في GitHub Secrets باسم MAPS_API_KEY
+
+        للاستخدام المحلي: أنشئ ملف app/secrets.properties وأضف:
+        MAPS_API_KEY=your_key_here
+    -->
+    <string name="google_maps_key" templateMergeStrategy="preserve" translatable="false">
+        ${MAPS_API_KEY}
+    </string>
+</resources>
