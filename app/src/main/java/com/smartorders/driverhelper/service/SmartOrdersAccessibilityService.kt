@@ -29,6 +29,7 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "SmartOrdersAS"
+        private const val TAG_DBG = "SmartOrders_DEBUG"
         var isRunning = false
 
         val SUPPORTED_PACKAGES = mapOf(
@@ -62,35 +63,52 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         isRunning = true
-        Log.i(TAG, "══════════════════════════════════════════")
-        Log.i(TAG, " Smart Orders Accessibility Service STARTED")
-        Log.i(TAG, " Monitoring: ${SUPPORTED_PACKAGES.values}")
-        Log.i(TAG, "══════════════════════════════════════════")
 
         val info = AccessibilityServiceInfo().apply {
-            // Receive ALL event types
-            eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+            eventTypes   = AccessibilityEvent.TYPES_ALL_MASK
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            // Monitor ALL packages — we filter in code
-            packageNames = null
-            flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
-                    AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
-                    AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            packageNames = null          // null = ALL packages, no filter
+            flags        = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                           AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                           AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             notificationTimeout = 50
         }
         serviceInfo = info
+
+        // Confirm effective config
+        val eff = serviceInfo
+        Log.i(TAG_DBG, "══════════════════════════════════════════════")
+        Log.i(TAG_DBG, " SmartOrders Accessibility Service CONNECTED")
+        Log.i(TAG_DBG, " effectiveEventTypes  = ${eff?.eventTypes}")
+        Log.i(TAG_DBG, " effectivePackages    = ${eff?.packageNames?.toList()}")
+        Log.i(TAG_DBG, " effectiveFlags       = ${eff?.flags}")
+        Log.i(TAG_DBG, " effectiveTimeout     = ${eff?.notificationTimeout}")
+        Log.i(TAG_DBG, " watching packages    = ${SUPPORTED_PACKAGES.values}")
+        Log.i(TAG_DBG, "══════════════════════════════════════════════")
     }
 
     // ─── Event entry point — runs on MAIN thread ──────────────────────────────
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        // ── RAW DEBUG — fires before ANY filtering ──────────────────────────
+        // Run: adb logcat -s SmartOrders_DEBUG to watch this
+        val rawPkg  = event?.packageName?.toString() ?: "(null)"
+        val rawType = event?.eventType ?: -1
+        val rawCls  = event?.className?.toString() ?: "(null)"
+        Log.d(TAG_DBG, "EVENT pkg=$rawPkg type=$rawType class=$rawCls")
+        // ───────────────────────────────────────────────────────────────────
+
         event ?: return
         val packageName = event.packageName?.toString() ?: return
 
         // Resolve to our internal app name
         val appName = SUPPORTED_PACKAGES.entries.find { it.value == packageName }?.key
             ?: PACKAGE_ALIASES[packageName]
-            ?: return  // Not a watched package
+            ?: run {
+                // Log events from unknown packages at verbose level
+                // (comment out the return below to see ALL apps' events)
+                return
+            }
 
         Log.v(TAG, "[$appName] Event type=${event.eventType} from $packageName")
 
