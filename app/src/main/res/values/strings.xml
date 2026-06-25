@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Smart Orders Driver Helper</string>
-    <string name="accessibility_service_label">Smart Orders - قبول تلقائي</string>
-    <string name="accessibility_service_description">يتيح للتطبيق قراءة شاشة تطبيقات السائق وقبول الرحلات تلقائياً بناءً على القواعد المحددة</string>
+    <string name="app_name">Smart Orders</string>
+    <string name="accessibility_service_label">Smart Orders Driver Helper</string>
+    <string name="accessibility_service_description">Monitors Jeeny Driver app to auto-accept trip requests based on your rules.</string>
 </resources>

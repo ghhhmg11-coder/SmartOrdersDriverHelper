@@ -1,2 +1,3 @@
-# Add project specific ProGuard rules here.
--keep class com.smartorders.driverhelper.** { *; }
+-keep class com.smartorders.driverhelper.service.** { *; }
+-keepattributes *Annotation*
+-dontwarn kotlin.**
