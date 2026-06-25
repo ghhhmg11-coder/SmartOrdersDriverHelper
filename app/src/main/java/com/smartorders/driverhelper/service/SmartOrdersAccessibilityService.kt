@@ -31,7 +31,6 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
         private const val TAG = "SmartOrdersAS"
         var isRunning = false
 
-        // Known Jeeny package names (try both variants)
         val SUPPORTED_PACKAGES = mapOf(
             "jeeny"  to "com.jeeny.driver",
             "uber"   to "com.ubercab.driver",
@@ -39,169 +38,342 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
             "bolt"   to "ee.mtakso.driver"
         )
 
-        // Additional known package aliases
+        // Alternative package names that some Jeeny builds use
         private val PACKAGE_ALIASES = mapOf(
-            "com.jeeny.drivers"   to "jeeny",
-            "sa.com.jeeny.driver" to "jeeny",
-            "com.careem.acma"     to "careem",
-            "com.bolt.driver"     to "bolt"
+            "com.jeeny.drivers"    to "jeeny",
+            "sa.com.jeeny.driver"  to "jeeny",
+            "com.jeeny.driverapp"  to "jeeny",
+            "com.careem.acma"      to "careem",
+            "com.bolt.driver"      to "bolt"
         )
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // Debounce per-package: track last processed text per app
-    private val lastProcessed = mutableMapOf<String, Pair<String, Long>>()
+    // Debounce per app: last (combinedText, timestamp)
+    private val lastDebounce = mutableMapOf<String, Pair<String, Long>>()
     private val debounceMs = 1500L
+
+    // Set of app names currently processing — prevent double-fires
+    private val inFlight = mutableSetOf<String>()
+
+    // ─── Service lifecycle ────────────────────────────────────────────────────
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         isRunning = true
-        Log.i(TAG, "════════════════════════════════════")
-        Log.i(TAG, "Smart Orders Accessibility Service CONNECTED")
-        Log.i(TAG, "Monitoring packages: ${SUPPORTED_PACKAGES.values}")
-        Log.i(TAG, "════════════════════════════════════")
+        Log.i(TAG, "══════════════════════════════════════════")
+        Log.i(TAG, " Smart Orders Accessibility Service STARTED")
+        Log.i(TAG, " Monitoring: ${SUPPORTED_PACKAGES.values}")
+        Log.i(TAG, "══════════════════════════════════════════")
 
         val info = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_CLICKED or
-                    AccessibilityEvent.TYPE_VIEW_FOCUSED
+            // Receive ALL event types
+            eventTypes = AccessibilityEvent.TYPES_ALL_MASK
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            // Monitor ALL packages — we filter in code
+            packageNames = null
             flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
                     AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
                     AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
             notificationTimeout = 50
-            packageNames = null  // monitor ALL packages — filter in code
         }
         serviceInfo = info
     }
+
+    // ─── Event entry point — runs on MAIN thread ──────────────────────────────
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
         val packageName = event.packageName?.toString() ?: return
 
-        // Resolve app name — check primary map and aliases
+        // Resolve to our internal app name
         val appName = SUPPORTED_PACKAGES.entries.find { it.value == packageName }?.key
             ?: PACKAGE_ALIASES[packageName]
-            ?: return  // Not a supported app — ignore silently
+            ?: return  // Not a watched package
 
-        // Capture root node on the MAIN thread immediately (before coroutine launch)
-        val rootNode = rootInActiveWindow
-        if (rootNode == null) {
-            Log.v(TAG, "[$appName] rootInActiveWindow is null — skipping event")
+        Log.v(TAG, "[$appName] Event type=${event.eventType} from $packageName")
+
+        // Collect roots from ALL visible windows while still on the MAIN thread.
+        // This is critical for bottom-sheet detection — the bottom sheet lives in
+        // a separate AccessibilityWindowInfo, not in rootInActiveWindow.
+        val roots = collectAllWindowRoots(appName)
+        if (roots.isEmpty()) {
+            Log.v(TAG, "[$appName] No window roots found")
             return
         }
 
+        // Build combined text from all roots
+        val combinedText = buildCombinedText(roots)
+
+        // Hand off to IO for everything after this point
         serviceScope.launch {
             try {
-                processEvent(appName, packageName, rootNode)
+                processScreen(appName, combinedText, roots)
             } catch (e: Exception) {
-                Log.e(TAG, "[$appName] Exception in processEvent: ${e.message}", e)
+                Log.e(TAG, "[$appName] Exception: ${e.message}", e)
             }
         }
     }
 
-    private suspend fun processEvent(appName: String, packageName: String, rootNode: AccessibilityNodeInfo) {
+    // Gathers root nodes from all currently visible accessibility windows.
+    // We check EVERY window — we don't filter by package here because a
+    // Dialog/BottomSheet might report the parent app's package or a system package.
+    private fun collectAllWindowRoots(triggerApp: String): List<AccessibilityNodeInfo> {
+        val result = mutableListOf<AccessibilityNodeInfo>()
+
+        // rootInActiveWindow first (always try it)
+        rootInActiveWindow?.let { result.add(it) }
+
+        // All other windows
+        try {
+            val allWindows = windows ?: return result
+            for (window in allWindows) {
+                try {
+                    val root = window.root ?: continue
+                    // Avoid duplicating the active window we already added
+                    if (result.none { it.windowId == root.windowId }) {
+                        result.add(root)
+                        Log.v(TAG, "[$triggerApp] Window: id=${window.id} type=${window.type} pkg=${root.packageName}")
+                    }
+                } catch (e: Exception) {
+                    Log.v(TAG, "[$triggerApp] Window read error: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.v(TAG, "[$triggerApp] windows list error: ${e.message}")
+        }
+
+        Log.d(TAG, "[$triggerApp] Total window roots collected: ${result.size}")
+        return result
+    }
+
+    private fun buildCombinedText(roots: List<AccessibilityNodeInfo>): String {
+        val sb = StringBuilder()
+        roots.forEach { root -> collectText(root, sb) }
+        return sb.toString()
+    }
+
+    // ─── Screen processing — runs on IO thread ────────────────────────────────
+
+    private suspend fun processScreen(
+        appName: String,
+        combinedText: String,
+        roots: List<AccessibilityNodeInfo>
+    ) {
         val prefs = AppPreferences(applicationContext)
 
-        val autoAccept = prefs.autoAcceptEnabled.first()
-        val targetApp  = prefs.targetApp.first()
-
-        Log.v(TAG, "[$appName] Event received. autoAccept=$autoAccept, targetApp=$targetApp")
-
-        if (!autoAccept) {
-            Log.v(TAG, "[$appName] Auto-accept is OFF — skipping")
+        if (!prefs.autoAcceptEnabled.first()) {
+            Log.v(TAG, "[$appName] Auto-accept OFF — skipping")
             return
         }
 
-        val isTargeted = targetApp == "all" || targetApp == appName
-        if (!isTargeted) {
-            Log.v(TAG, "[$appName] Not targeted (targetApp=$targetApp) — skipping")
+        val targetApp = prefs.targetApp.first()
+        if (targetApp != "all" && targetApp != appName) {
+            Log.v(TAG, "[$appName] Not targeted (target=$targetApp)")
             return
         }
 
-        // Collect all visible text from the node tree
-        val allText = StringBuilder()
-        collectText(rootNode, allText)
-        val rawText = allText.toString()
-
-        if (rawText.isBlank()) {
-            Log.v(TAG, "[$appName] Empty screen text — skipping")
+        if (combinedText.isBlank()) {
+            Log.v(TAG, "[$appName] Empty combined text")
             return
         }
 
-        // Debounce: skip if same content within debounce window
+        // Debounce
         val now = System.currentTimeMillis()
-        val prev = lastProcessed[appName]
-        if (prev != null && prev.first == rawText && now - prev.second < debounceMs) {
-            Log.v(TAG, "[$appName] Debounce — same text within ${debounceMs}ms, skipping")
+        val prev = lastDebounce[appName]
+        if (prev != null && prev.first == combinedText && now - prev.second < debounceMs) {
+            Log.v(TAG, "[$appName] Debounce — same content within ${debounceMs}ms")
             return
         }
-        lastProcessed[appName] = Pair(rawText, now)
+        lastDebounce[appName] = Pair(combinedText, now)
 
-        Log.d(TAG, "[$appName] ── Processing screen ──────────────────")
-        Log.d(TAG, "[$appName] Screen text (first 300 chars): ${rawText.take(300)}")
-
-        // Parse the trip from screen text
-        val trip = TripParser.parse(appName, rawText)
-        if (trip == null) {
-            Log.d(TAG, "[$appName] Not a trip request screen — no action")
+        // Prevent concurrent processing for same app
+        if (inFlight.contains(appName)) {
+            Log.v(TAG, "[$appName] Already processing — skipping")
             return
         }
+        inFlight.add(appName)
 
-        Log.i(TAG, "[$appName] ✅ TRIP DETECTED: price=${trip.price} SAR, pickup=${trip.pickupDistance}km, trip=${trip.tripDistance}km")
+        try {
+            Log.d(TAG, "[$appName] ─── Evaluating screen ─────────────────────")
+            Log.d(TAG, "[$appName] Combined text (${combinedText.length} chars): ${combinedText.take(400)}")
 
-        val rules = EvaluatedRules(
-            minPrice     = prefs.minPrice.first(),
-            maxPrice     = prefs.maxPrice.first(),
-            maxPickupDist = prefs.maxPickupDistance.first(),
-            maxTripDist  = prefs.maxTripDistance.first()
-        )
-        Log.d(TAG, "[$appName] Rules: minPrice=${rules.minPrice}, maxPrice=${rules.maxPrice}, maxPickup=${rules.maxPickupDist}km, maxTrip=${rules.maxTripDist}km")
-
-        val zones = loadZones()
-        val (shouldAccept, reason) = evaluateRules(trip, rules, zones)
-
-        Log.i(TAG, "[$appName] Decision: shouldAccept=$shouldAccept, reason='$reason'")
-
-        // Persist trip log to DB
-        val db = AppDatabase.getInstance(applicationContext)
-        val logEntity = TripLogEntity(
-            timestamp           = System.currentTimeMillis(),
-            sourceApp           = appName,
-            rawScreenText       = rawText,
-            price               = trip.price,
-            pickupDistance      = trip.pickupDistance,
-            tripDistance        = trip.tripDistance,
-            pickupLocation      = trip.pickupLocation,
-            destinationLocation = trip.destinationLocation,
-            accepted            = shouldAccept,
-            rejectionReason     = reason
-        )
-        db.tripLogDao().insert(logEntity)
-        Log.d(TAG, "[$appName] Trip log saved to database")
-
-        if (shouldAccept) {
-            val delayMs = prefs.delayMs.first()
-            Log.i(TAG, "[$appName] Waiting ${delayMs}ms before clicking accept...")
-            delay(delayMs)
-
-            withContext(Dispatchers.Main) {
-                performAcceptClick(appName, rootNode, prefs)
+            val trip = TripParser.parse(appName, combinedText)
+            if (trip == null) {
+                Log.d(TAG, "[$appName] Not a trip request screen")
+                return
             }
-        } else {
-            Log.i(TAG, "[$appName] ❌ Trip REJECTED: $reason")
+
+            Log.i(TAG, "[$appName] ✅ TRIP DETECTED — price=${trip.price} SAR, pickup=${trip.pickupDistance}km")
+
+            val rules = EvaluatedRules(
+                minPrice      = prefs.minPrice.first(),
+                maxPrice      = prefs.maxPrice.first(),
+                maxPickupDist = prefs.maxPickupDistance.first(),
+                maxTripDist   = prefs.maxTripDistance.first()
+            )
+
+            val zones = loadZones()
+            val (shouldAccept, reason) = evaluateRules(trip, rules, zones)
+
+            // Save to database (increments detected/accepted counters via ViewModel query)
+            val db = AppDatabase.getInstance(applicationContext)
+            db.tripLogDao().insert(TripLogEntity(
+                timestamp           = System.currentTimeMillis(),
+                sourceApp           = appName,
+                rawScreenText       = combinedText,
+                price               = trip.price,
+                pickupDistance      = trip.pickupDistance,
+                tripDistance        = trip.tripDistance,
+                pickupLocation      = trip.pickupLocation,
+                destinationLocation = trip.destinationLocation,
+                accepted            = shouldAccept,
+                rejectionReason     = reason
+            ))
+            Log.d(TAG, "[$appName] Trip log saved (accepted=$shouldAccept)")
+
+            if (shouldAccept) {
+                val delayMs = prefs.delayMs.first()
+                Log.i(TAG, "[$appName] ⏱ Accepting in ${delayMs}ms...")
+                delay(delayMs)
+
+                // Click on main thread — pass roots captured earlier
+                withContext(Dispatchers.Main) {
+                    // Re-fetch fresh roots at click time for the most current tree
+                    val freshRoots = collectAllWindowRoots(appName)
+                    performAcceptClick(appName, freshRoots, prefs)
+                }
+            } else {
+                Log.i(TAG, "[$appName] ❌ REJECTED — $reason")
+            }
+        } finally {
+            inFlight.remove(appName)
         }
     }
+
+    // ─── Accept click — all strategies ───────────────────────────────────────
+
+    private fun performAcceptClick(
+        appName: String,
+        roots: List<AccessibilityNodeInfo>,
+        prefs: AppPreferences
+    ) {
+        Log.i(TAG, "[$appName] 🔍 Searching for accept button across ${roots.size} window(s)...")
+
+        for ((idx, root) in roots.withIndex()) {
+            Log.d(TAG, "[$appName] Searching window #$idx (${root.packageName})")
+
+            val clicked = tryClickByText(appName, root)
+                || tryClickByViewId(appName, root)
+                || tryClickByDescription(appName, root)
+
+            if (clicked) {
+                Log.i(TAG, "[$appName] ✅ Accept button CLICKED in window #$idx!")
+                serviceScope.launch {
+                    if (prefs.vibrationEnabled.first()) {
+                        @Suppress("DEPRECATION")
+                        val vib = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+                        vib?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+                    }
+                }
+                return
+            }
+        }
+
+        Log.w(TAG, "[$appName] ⚠️ Accept button NOT FOUND in any window — dumping node trees:")
+        roots.forEachIndexed { idx, root ->
+            Log.w(TAG, "[$appName] ── Window #$idx (${root.packageName}) tree ──")
+            dumpNodeTree(appName, root, 0)
+        }
+    }
+
+    /** Strategy 1: match node text/contentDescription */
+    private fun tryClickByText(appName: String, root: AccessibilityNodeInfo): Boolean {
+        return findAndClick(appName, root, "text") { node ->
+            val text = node.text?.toString() ?: ""
+            val desc = node.contentDescription?.toString() ?: ""
+            TripParser.isAcceptButtonText(text)
+                || TripParser.containsAcceptButtonText(text)
+                || TripParser.isAcceptButtonText(desc)
+                || TripParser.containsAcceptButtonText(desc)
+        }
+    }
+
+    /** Strategy 2: resource-id contains "accept"/"confirm" */
+    private fun tryClickByViewId(appName: String, root: AccessibilityNodeInfo): Boolean {
+        val keywords = listOf("accept", "confirm", "approve", "btn_accept", "action_accept")
+        return findAndClick(appName, root, "viewId") { node ->
+            val id = node.viewIdResourceName?.lowercase() ?: ""
+            keywords.any { id.contains(it) }
+        }
+    }
+
+    /** Strategy 3: content description substring */
+    private fun tryClickByDescription(appName: String, root: AccessibilityNodeInfo): Boolean {
+        return findAndClick(appName, root, "description") { node ->
+            val desc = node.contentDescription?.toString() ?: ""
+            TripParser.containsAcceptButtonText(desc)
+        }
+    }
+
+    private fun findAndClick(
+        appName: String,
+        node: AccessibilityNodeInfo?,
+        strategy: String,
+        depth: Int = 0,
+        predicate: (AccessibilityNodeInfo) -> Boolean
+    ): Boolean {
+        node ?: return false
+        if (depth > 25) return false
+
+        if (predicate(node)) {
+            Log.d(TAG, "[$appName][$strategy] Candidate: text='${node.text}' class='${node.className?.toString()?.substringAfterLast('.')}' clickable=${node.isClickable} id='${node.viewIdResourceName}'")
+            if (performNodeClick(appName, node)) return true
+        }
+
+        for (i in 0 until node.childCount) {
+            if (findAndClick(appName, node.getChild(i), strategy, depth + 1, predicate)) return true
+        }
+        return false
+    }
+
+    private fun performNodeClick(appName: String, node: AccessibilityNodeInfo): Boolean {
+        // Direct click
+        if (node.isClickable && node.isEnabled) {
+            if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                Log.d(TAG, "[$appName] ✓ Direct click succeeded")
+                return true
+            }
+        }
+        // Walk up parents (up to 6 levels)
+        var parent = node.parent
+        var level = 0
+        while (parent != null && level < 6) {
+            if (parent.isClickable && parent.isEnabled) {
+                if (parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                    Log.d(TAG, "[$appName] ✓ Parent click (level=$level, class=${parent.className?.toString()?.substringAfterLast('.')}) succeeded")
+                    return true
+                }
+            }
+            parent = parent.parent
+            level++
+        }
+        // Force-click the original node (ignore clickable flag)
+        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            Log.d(TAG, "[$appName] ✓ Force-click succeeded")
+            return true
+        }
+        return false
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
 
     private fun collectText(node: AccessibilityNodeInfo?, sb: StringBuilder) {
         node ?: return
         if (!node.text.isNullOrBlank()) sb.append(node.text).append("\n")
         if (!node.contentDescription.isNullOrBlank()) sb.append(node.contentDescription).append("\n")
-        for (i in 0 until node.childCount) {
-            collectText(node.getChild(i), sb)
-        }
+        for (i in 0 until node.childCount) collectText(node.getChild(i), sb)
     }
 
     private suspend fun loadZones(): List<Zone> {
@@ -212,149 +384,40 @@ class SmartOrdersAccessibilityService : AccessibilityService() {
     }
 
     private fun evaluateRules(trip: DetectedTrip, rules: EvaluatedRules, zones: List<Zone>): Pair<Boolean, String> {
-        if (trip.price > 0 && trip.price < rules.minPrice) {
-            return Pair(false, "السعر أقل من الحد الأدنى: ${trip.price} < ${rules.minPrice} SAR")
-        }
-        if (trip.price > rules.maxPrice) {
-            return Pair(false, "السعر أعلى من الحد الأقصى: ${trip.price} > ${rules.maxPrice} SAR")
-        }
-        if (trip.pickupDistance > rules.maxPickupDist && trip.pickupDistance > 0) {
-            return Pair(false, "مسافة الاستلام تجاوزت الحد: ${trip.pickupDistance} > ${rules.maxPickupDist} km")
-        }
-        if (trip.tripDistance > rules.maxTripDist && trip.tripDistance > 0) {
-            return Pair(false, "مسافة الرحلة تجاوزت الحد: ${trip.tripDistance} > ${rules.maxTripDist} km")
-        }
+        if (trip.price > 0 && trip.price < rules.minPrice)
+            return Pair(false, "السعر ${trip.price} أقل من الحد ${rules.minPrice} SAR")
+        if (trip.price > rules.maxPrice)
+            return Pair(false, "السعر ${trip.price} أعلى من الحد ${rules.maxPrice} SAR")
+        if (trip.pickupDistance > rules.maxPickupDist && trip.pickupDistance > 0)
+            return Pair(false, "مسافة الاستلام ${trip.pickupDistance} > ${rules.maxPickupDist} km")
+        if (trip.tripDistance > rules.maxTripDist && trip.tripDistance > 0)
+            return Pair(false, "مسافة الرحلة ${trip.tripDistance} > ${rules.maxTripDist} km")
         if (zones.isNotEmpty()) {
-            val zoneResult = ZoneChecker.checkZones(0.0, 0.0, 0.0, 0.0, zones)
-            if (zoneResult.blocked) return Pair(false, zoneResult.reason)
+            val zr = ZoneChecker.checkZones(0.0, 0.0, 0.0, 0.0, zones)
+            if (zr.blocked) return Pair(false, zr.reason)
         }
         return Pair(true, "")
     }
 
-    // ── Click the Accept button using multiple strategies ──────────────────────
-
-    private fun performAcceptClick(appName: String, root: AccessibilityNodeInfo, prefs: AppPreferences) {
-        Log.i(TAG, "[$appName] 🔍 Searching for accept button...")
-
-        // Re-fetch root to get latest node tree at click time
-        val freshRoot = rootInActiveWindow ?: root
-
-        val clicked = tryClickByText(appName, freshRoot)
-            || tryClickByViewId(appName, freshRoot)
-            || tryClickByDescription(appName, freshRoot)
-
-        if (clicked) {
-            Log.i(TAG, "[$appName] ✅ Accept button CLICKED successfully!")
-            serviceScope.launch {
-                val vibrate = prefs.vibrationEnabled.first()
-                if (vibrate) {
-                    @Suppress("DEPRECATION")
-                    val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-                    vibrator?.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
-                }
-            }
-        } else {
-            Log.w(TAG, "[$appName] ⚠️ Accept button NOT FOUND — dumping node tree:")
-            dumpNodeTree(freshRoot, 0, appName)
-        }
-    }
-
-    /** Strategy 1: find by node text matching accept button variants */
-    private fun tryClickByText(appName: String, root: AccessibilityNodeInfo): Boolean {
-        Log.d(TAG, "[$appName] Strategy 1: click by text")
-        return findAndClickByPredicate(appName, root) { node ->
-            val text = node.text?.toString() ?: ""
-            val desc = node.contentDescription?.toString() ?: ""
-            TripParser.isAcceptButtonText(text) || TripParser.isAcceptButtonText(desc) ||
-                    TripParser.containsAcceptButtonText(text) || TripParser.containsAcceptButtonText(desc)
-        }
-    }
-
-    /** Strategy 2: find by common resource-id patterns */
-    private fun tryClickByViewId(appName: String, root: AccessibilityNodeInfo): Boolean {
-        Log.d(TAG, "[$appName] Strategy 2: click by view ID")
-        val acceptIdKeywords = listOf("accept", "confirm", "btn_accept", "button_accept", "action_accept")
-        return findAndClickByPredicate(appName, root) { node ->
-            val id = node.viewIdResourceName?.lowercase() ?: ""
-            acceptIdKeywords.any { id.contains(it) }
-        }
-    }
-
-    /** Strategy 3: find by content description */
-    private fun tryClickByDescription(appName: String, root: AccessibilityNodeInfo): Boolean {
-        Log.d(TAG, "[$appName] Strategy 3: click by content description")
-        return findAndClickByPredicate(appName, root) { node ->
-            val desc = node.contentDescription?.toString() ?: ""
-            TripParser.containsAcceptButtonText(desc)
-        }
-    }
-
-    private fun findAndClickByPredicate(
-        appName: String,
-        node: AccessibilityNodeInfo?,
-        depth: Int = 0,
-        predicate: (AccessibilityNodeInfo) -> Boolean
-    ): Boolean {
-        node ?: return false
-        if (depth > 20) return false  // Safety limit
-
-        if (predicate(node)) {
-            Log.d(TAG, "[$appName] Found candidate node: text='${node.text}' class='${node.className}' clickable=${node.isClickable} id='${node.viewIdResourceName}'")
-            if (performNodeClick(appName, node)) return true
-        }
-
-        for (i in 0 until node.childCount) {
-            if (findAndClickByPredicate(appName, node.getChild(i), depth + 1, predicate)) return true
-        }
-        return false
-    }
-
-    private fun performNodeClick(appName: String, node: AccessibilityNodeInfo): Boolean {
-        // Try the node itself
-        if (node.isClickable && node.isEnabled) {
-            val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            Log.d(TAG, "[$appName] Direct click result: $result")
-            if (result) return true
-        }
-
-        // Walk up to 5 levels to find a clickable parent
-        var parent = node.parent
-        var level = 0
-        while (parent != null && level < 5) {
-            if (parent.isClickable && parent.isEnabled) {
-                val result = parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                Log.d(TAG, "[$appName] Parent click (level $level) result: $result, class='${parent.className}'")
-                if (result) return true
-            }
-            parent = parent.parent
-            level++
-        }
-
-        // Last resort: global ACTION_CLICK on the node regardless of clickable flag
-        val result = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        Log.d(TAG, "[$appName] Force click result: $result")
-        return result
-    }
-
-    /** Dump the accessibility node tree to logcat for debugging */
-    private fun dumpNodeTree(node: AccessibilityNodeInfo?, depth: Int, appName: String) {
+    /** Dump accessibility node tree to logcat for debugging */
+    private fun dumpNodeTree(appName: String, node: AccessibilityNodeInfo?, depth: Int) {
         node ?: return
-        if (depth > 15) {
-            Log.d(TAG, "[$appName] ${"  ".repeat(depth)}[... truncated ...]")
-            return
-        }
+        if (depth > 18) { Log.d(TAG, "[$appName]${"  ".repeat(depth)}[…]"); return }
         val indent = "  ".repeat(depth)
-        val text    = node.text?.toString()?.take(60) ?: ""
-        val desc    = node.contentDescription?.toString()?.take(60) ?: ""
-        val cls     = node.className?.toString()?.substringAfterLast('.') ?: ""
-        val id      = node.viewIdResourceName ?: ""
-        val click   = if (node.isClickable) "CLICKABLE" else ""
-        val enabled = if (node.isEnabled) "" else "DISABLED"
-        Log.d(TAG, "[$appName] $indent[$cls] text='$text' desc='$desc' id='$id' $click $enabled")
-        for (i in 0 until node.childCount) {
-            dumpNodeTree(node.getChild(i), depth + 1, appName)
+        val cls    = node.className?.toString()?.substringAfterLast('.') ?: "?"
+        val text   = node.text?.toString()?.take(80) ?: ""
+        val desc   = node.contentDescription?.toString()?.take(80) ?: ""
+        val id     = node.viewIdResourceName?.substringAfterLast('/') ?: ""
+        val flags  = buildString {
+            if (node.isClickable) append("CLICK ")
+            if (node.isEnabled)   append("EN ")
+            if (node.isFocusable) append("FOCUS ")
         }
+        Log.d(TAG, "[$appName]$indent[$cls] \"$text\" desc=\"$desc\" id=$id $flags")
+        for (i in 0 until node.childCount) dumpNodeTree(appName, node.getChild(i), depth + 1)
     }
+
+    // ─── Lifecycle ────────────────────────────────────────────────────────────
 
     override fun onInterrupt() {
         Log.w(TAG, "Accessibility Service interrupted")
